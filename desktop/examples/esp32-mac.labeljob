@@ -1,0 +1,119 @@
+{
+  "format": "label-production",
+  "version": 1,
+  "name": "ESP32 MAC 标签生产",
+  "template": {
+    "format": "label-desk",
+    "version": 1,
+    "id": "standard",
+    "name": "ESP32 · 标准设备标签",
+    "width": 30,
+    "height": 20,
+    "elements": [
+      {
+        "id": "title",
+        "type": "text",
+        "name": "设备型号",
+        "x": 1.5,
+        "y": 1.3,
+        "w": 27,
+        "h": 2.2,
+        "font": 1.65,
+        "bold": true,
+        "content": "{{model}}"
+      },
+      {
+        "id": "line",
+        "type": "line",
+        "name": "分隔线",
+        "x": 1.5,
+        "y": 4.3,
+        "w": 27,
+        "h": 0.15,
+        "content": ""
+      },
+      {
+        "id": "qr",
+        "type": "qr",
+        "name": "设备二维码",
+        "x": 1,
+        "y": 5,
+        "w": 12,
+        "h": 12,
+        "content": "{{device_id}}"
+      },
+      {
+        "id": "caption",
+        "type": "text",
+        "name": "设备号标题",
+        "x": 14,
+        "y": 6,
+        "w": 14.5,
+        "h": 2,
+        "font": 1.1,
+        "content": "DEVICE ID"
+      },
+      {
+        "id": "serial",
+        "type": "text",
+        "name": "设备号",
+        "x": 14,
+        "y": 9,
+        "w": 14.5,
+        "h": 2,
+        "font": 1.4,
+        "bold": true,
+        "content": "{{device_id}}"
+      },
+      {
+        "id": "batch",
+        "type": "text",
+        "name": "生产批次",
+        "x": 14,
+        "y": 13,
+        "w": 14.5,
+        "h": 2,
+        "font": 1.15,
+        "content": "{{batch}}"
+      },
+      {
+        "id": "date",
+        "type": "text",
+        "name": "生产日期",
+        "x": 1.5,
+        "y": 17.5,
+        "w": 27,
+        "h": 1.8,
+        "font": 1.05,
+        "content": "{{date}}  /  DEVICE LABEL"
+      }
+    ]
+  },
+  "workflow": {
+    "variables": {
+      "model": "ESP32-S3",
+      "batch": "DEMO"
+    },
+    "steps": [
+      {
+        "id": "source",
+        "type": "read_esp32_mac"
+      },
+      {
+        "id": "format",
+        "type": "format_id",
+        "case": "upper",
+        "separator": "compact",
+        "prefix": ""
+      },
+      {
+        "id": "preview",
+        "type": "preview"
+      },
+      {
+        "id": "print",
+        "type": "print_label"
+      }
+    ]
+  }
+}

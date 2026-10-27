@@ -1,0 +1,4 @@
+PySide6-Essentials==6.8.3
+esptool==4.9.0
+qrcode==8.2
+pyinstaller==6.16.0

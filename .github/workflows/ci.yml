@@ -1,0 +1,32 @@
+name: Desktop CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          architecture: x64
+          cache: pip
+          cache-dependency-path: desktop/requirements.txt
+      - run: python scripts/privacy_check.py
+      - run: python -m pip install -r desktop/requirements.txt
+      - run: python -m unittest discover -s tests -v
+      - run: python -m PyInstaller --noconfirm --clean desktop/MarkFlow.spec
+      - run: python scripts/package_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MarkFlow-Windows-x64
+          path: release/*
+          if-no-files-found: error
+          retention-days: 14
