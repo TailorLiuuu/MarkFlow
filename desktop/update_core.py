@@ -111,11 +111,15 @@ def parse_release(data, current):
             raise ValueError('更新文件来自其他仓库或版本')
         if type(a.get('size')) is not int or not 0 < a['size'] <= (MAX_ARCHIVE if name == ASSET else 16384):
             raise ValueError('更新文件大小无效')
+        asset_id = a.get('id')
+        api_url = 'https://api.github.com/repos/' + REPOSITORY + '/releases/assets/' + str(asset_id)
+        if type(asset_id) is not int or asset_id <= 0 or a.get('url') != api_url:
+            raise ValueError('更新文件的官方资产地址无效')
         selected[name] = a
     digest = selected[ASSET].get('digest')
     if digest is not None and not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
         raise ValueError('GitHub 文件校验值无效')
-    return {'version': tag.lstrip('v'), 'url': selected[ASSET]['browser_download_url'], 'size': selected[ASSET]['size'], 'digest': digest, 'checksums': selected['SHA256SUMS']['browser_download_url'], 'notes': str(data.get('body') or '')[:6000]}
+    return {'version': tag.lstrip('v'), 'url': selected[ASSET]['url'], 'size': selected[ASSET]['size'], 'digest': digest, 'checksums': selected['SHA256SUMS']['url'], 'notes': str(data.get('body') or '')[:6000]}
 
 
 def check_latest(current):

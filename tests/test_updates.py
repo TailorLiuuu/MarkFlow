@@ -15,8 +15,8 @@ from test_agent_recovery import FakeCloud
 
 def release(tag='v0.4.2'):
     return {'tag_name': tag, 'draft': False, 'prerelease': False, 'assets': [
-        {'name': name, 'state': 'uploaded', 'size': 100, 'browser_download_url': u.WEB+'/releases/download/'+tag+'/'+name}
-        for name in (u.ASSET, 'SHA256SUMS')]}
+        {'id': index, 'url': 'https://api.github.com/repos/'+u.REPOSITORY+'/releases/assets/'+str(index), 'name': name, 'state': 'uploaded', 'size': 100, 'browser_download_url': u.WEB+'/releases/download/'+tag+'/'+name}
+        for index, name in enumerate((u.ASSET, 'SHA256SUMS'), 1)]}
 
 
 class UpdatesTests(unittest.TestCase):
@@ -47,11 +47,12 @@ class UpdatesTests(unittest.TestCase):
             with self.assertRaises(ValueError): u.version_tuple(version)
 
     def test_release_must_be_stable_complete_and_in_same_repository(self):
-        for edit in ('draft', 'prerelease', 'missing', 'external', 'oversize'):
+        for edit in ('draft', 'prerelease', 'missing', 'external', 'external_api', 'oversize'):
             data=release()
             if edit in ('draft','prerelease'): data[edit]=True
             elif edit=='missing': data['assets'].pop()
             elif edit=='external': data['assets'][0]['browser_download_url']='https://example.com/update.zip'
+            elif edit=='external_api': data['assets'][0]['url']='https://api.github.com/repos/other/repo/releases/assets/1'
             else: data['assets'][0]['size']=u.MAX_ARCHIVE+1
             with self.subTest(edit=edit), self.assertRaises(ValueError): u.parse_release(data,'0.4.1')
 
