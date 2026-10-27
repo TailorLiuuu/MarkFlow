@@ -22,7 +22,7 @@ def main():
     audit(source)
     output = ROOT / 'release'
     output.mkdir(exist_ok=True)
-    archive = output / f'MarkFlow-{VERSION}-Windows-x64.zip'
+    archive = output / 'MarkFlow-Windows-x64.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as z:
         for p in files:
             z.write(p, Path('MarkFlow') / p.relative_to(source))

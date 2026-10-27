@@ -19,3 +19,5 @@ Release 草稿包含客户端 ZIP、校验文件及 GitHub 自带源码归档。
 当前使用手动下载安装更新；本仓库暂未实现应用内更新检查或静默更新。macOS 构建、签名、公证和更新仍需单独完成，不将未验证的包标为正式发布。
 
 `LabelDeskWorker`、旧数据目录和 `InfinLabLabelDesk` 启动项名称暂时保留用于升级兼容，不应随显示名称变更而清空用户数据。
+
+Windows 资产名固定为 `MarkFlow-Windows-x64.zip`；管理端使用 `https://github.com/TailorLiuuu/MarkFlow/releases/latest/download/MarkFlow-Windows-x64.zip` 跟随最新正式版本。
