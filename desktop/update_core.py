@@ -179,6 +179,14 @@ def package_entries(z):
     return entries
 
 
+def hidden_directory(path, hidden):
+    # Keep temporary/rollback folders out of the Windows desktop's visible app list.
+    if os.name == 'nt':
+        import ctypes
+        flags = os.stat(path).st_file_attributes
+        ctypes.windll.kernel32.SetFileAttributesW(ctypes.c_wchar_p(str(path)), (flags | 2) if hidden else (flags & ~2))
+
+
 def prepare_package(archive, expected_hash, version, app_dir, data_dir):
     app_dir = Path(app_dir).resolve()
     data_dir = Path(data_dir).resolve()
@@ -190,6 +198,7 @@ def prepare_package(archive, expected_hash, version, app_dir, data_dir):
         raise ValueError('更新包校验失败')
     stage = app_dir.parent / ('.markflow-update-' + str(uuid.uuid4()))
     stage.mkdir()
+    hidden_directory(stage, True)
     try:
         with zipfile.ZipFile(archive) as z:
             entries = package_entries(z)
@@ -224,8 +233,10 @@ def replace_transaction(app, stage, backup, launch_and_verify, restore_launch, r
     try:
         app.rename(backup)
         moved = True
+        hidden_directory(backup, True)
         record('backed_up')
         stage.rename(app)
+        hidden_directory(app, False)
         record('installed')
         if not launch_and_verify(app):
             raise RuntimeError('新版启动未通过检查')
@@ -236,6 +247,7 @@ def replace_transaction(app, stage, backup, launch_and_verify, restore_launch, r
                 failed = stage.with_name(stage.name + '-failed')
                 app.rename(failed)
             backup.rename(app)
+            hidden_directory(app, False)
             record('rolled_back')
             restore_launch(app)
         raise
