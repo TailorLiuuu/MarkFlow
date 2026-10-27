@@ -99,4 +99,27 @@ class UpdatesTests(unittest.TestCase):
             setattr(e,field,True);self.assertFalse(e.prepare_update());self.assertFalse(e.update_installing);setattr(e,field,False)
         self.assertTrue(e.prepare_update());self.assertTrue(e.local_pause);self.assertIsNone(e.enqueue('start'))
 
+    def test_broken_proxy_falls_back_to_verified_direct_connection(self):
+        import urllib.error
+        proxy=Mock()
+        def fail(request,**kwargs):
+            request.set_proxy('127.0.0.1:1234','http')
+            raise urllib.error.URLError('connection reset')
+        proxy.open.side_effect=fail
+        direct=Mock();direct.open.return_value=io.BytesIO(b'{}')
+        with patch.object(u,'_prefer_direct',False),patch('urllib.request.getproxies',return_value={'https':'http://127.0.0.1:1234'}),patch('urllib.request.build_opener',side_effect=[proxy,direct]) as build:
+            self.assertEqual(u.open_url(u.API).read(),b'{}')
+            self.assertEqual(build.call_count,2)
+            self.assertTrue(u._prefer_direct)
+            self.assertEqual(build.call_args_list[1].args[0].proxies,{})
+            self.assertEqual(direct.open.call_args.args[0].host,'api.github.com')
+
+    def test_http_denials_and_certificate_errors_are_not_bypassed(self):
+        import urllib.error,ssl
+        for error in (urllib.error.HTTPError(u.API,403,'Forbidden',{},None),urllib.error.URLError(ssl.SSLCertVerificationError('certificate mismatch'))):
+            opener=Mock();opener.open.side_effect=error
+            with patch.object(u,'_prefer_direct',False),patch('urllib.request.getproxies',return_value={'https':'http://127.0.0.1:1234'}),patch('urllib.request.build_opener',return_value=opener) as build:
+                with self.assertRaises(urllib.error.URLError):u.open_url(u.API)
+                self.assertEqual(build.call_count,1)
+
 if __name__=='__main__':unittest.main()

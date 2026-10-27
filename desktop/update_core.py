@@ -5,6 +5,8 @@ import os
 import re
 import shutil
 import stat
+import ssl
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -19,6 +21,8 @@ WEB = 'https://github.com/' + REPOSITORY
 ASSET = 'MarkFlow-Windows-x64.zip'
 MAX_ARCHIVE = 180 * 1024 * 1024
 MAX_EXPANDED = 700 * 1024 * 1024
+_prefer_direct = False
+_prefer_native = False
 
 
 def version_tuple(value):
@@ -52,9 +56,32 @@ class SafeRedirect(urllib.request.HTTPRedirectHandler):
 
 def open_url(url):
     safe_url(url)
-    request = urllib.request.Request(url, headers={'User-Agent': 'MarkFlow-Updater', 'Accept': 'application/vnd.github+json' if url == API else 'application/octet-stream'})
     # No machine credentials, cookies or GitHub account tokens are used.
-    return urllib.request.build_opener(SafeRedirect()).open(request, timeout=20)
+    global _prefer_direct, _prefer_native
+    if _prefer_native and sys.platform == 'win32':
+        from native_http import open_native
+        return open_native(url, safe_url)
+    has_proxy = any(k in urllib.request.getproxies() for k in ('http', 'https', 'all'))
+    routes = ([True, False] if _prefer_direct else [False, True]) if has_proxy else [True]
+    for index, direct in enumerate(routes):
+        request = urllib.request.Request(url, headers={'User-Agent': 'MarkFlow-Updater', 'Accept': 'application/vnd.github+json' if url == API else 'application/octet-stream'})
+        handler = urllib.request.ProxyHandler({}) if direct else urllib.request.ProxyHandler()
+        try:
+            response = urllib.request.build_opener(handler, SafeRedirect()).open(request, timeout=20)
+            _prefer_direct = direct
+            return response
+        except urllib.error.HTTPError:
+            raise  # Do not bypass authorization/rate-limit responses via another route.
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, ssl.SSLCertVerificationError):raise
+            if index == len(routes)-1:
+                if sys.platform == 'win32':
+                    from native_http import open_native
+                    response = open_native(url, safe_url)
+                    _prefer_native = True
+                    return response
+                raise
+    raise OSError('GitHub connection failed')
 
 
 def read_small(url, limit):

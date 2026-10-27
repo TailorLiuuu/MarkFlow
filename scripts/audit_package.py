@@ -37,6 +37,7 @@ def audit(source):
     check_code(marshal.loads(helper.extract('updater_worker')))
     helper_pyz = helper.open_embedded_archive(next(n for n in helper.toc if n.endswith('.pyz')))
     check_code(helper_pyz.extract('update_core'))
+    check_code(helper_pyz.extract('native_http'))
     for folder in ('assets', 'examples'):
         expected = list((ROOT / 'desktop' / folder).glob('*'))
         for original in expected:

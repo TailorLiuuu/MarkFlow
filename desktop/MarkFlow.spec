@@ -10,4 +10,4 @@ updater=EXE(PYZ(u.pure),u.scripts,u.binaries,u.datas,[],name='MarkFlowUpdater',d
 coll=COLLECT(app,worker,updater,a.binaries,a.datas,strip=False,upx=False,name='MarkFlow')
 
 if sys.platform=='darwin':
-    app_bundle=BUNDLE(coll,name='MarkFlow.app',bundle_identifier='cn.infinlab.labeldesk',info_plist={'NSHighResolutionCapable':True,'CFBundleShortVersionString':'0.4.2','NSHumanReadableCopyright':'InfinLab MarkFlow'})
+    app_bundle=BUNDLE(coll,name='MarkFlow.app',bundle_identifier='cn.infinlab.labeldesk',info_plist={'NSHighResolutionCapable':True,'CFBundleShortVersionString':'0.4.3','NSHumanReadableCopyright':'InfinLab MarkFlow'})
