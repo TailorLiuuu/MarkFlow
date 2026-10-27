@@ -64,7 +64,8 @@ def open_native(url, validate_url):
             # Disable automatic redirects so every destination is validated before contact.
             policy=w.DWORD(0)
             checked(dll.WinHttpSetOption(request,88,ctypes.byref(policy),ctypes.sizeof(policy)))
-            checked(dll.WinHttpSendRequest(request,'Accept: application/octet-stream\r\n',0xffffffff,None,0,0,0))
+            accept = 'application/vnd.github+json' if parsed.hostname == 'api.github.com' and '/releases/assets/' not in parsed.path else 'application/octet-stream'
+            checked(dll.WinHttpSendRequest(request,'Accept: '+accept+'\r\n',0xffffffff,None,0,0,0))
             checked(dll.WinHttpReceiveResponse(request,None))
             status=w.DWORD();length=w.DWORD(ctypes.sizeof(status))
             checked(dll.WinHttpQueryHeaders(request,19|0x20000000,None,ctypes.byref(status),ctypes.byref(length),None))
