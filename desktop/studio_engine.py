@@ -1,5 +1,5 @@
 """MarkFlow: local template production with optional managed template delivery."""
-import datetime,json,platform,queue,socket,time,uuid
+import datetime,json,platform,queue,socket,time,uuid,threading
 from pathlib import Path
 from agent_runtime import Engine,CloudError,VERSION
 from template_library import TemplateLibrary
@@ -11,6 +11,7 @@ class StudioEngine(Engine):
     def __init__(self,directory,emit):
         super().__init__(directory,emit)
         self.library=TemplateLibrary(self.dir/'templates');self.actions=queue.Queue();self.running=False;self.busy=False
+        self.start_request=None;self.start_pending=False;self._start_lock=threading.Lock()
         self.local_pause=False;self.online=False;self.cloud_name='';self.pair_code='';self.catalog_revision='';self.legacy_applied=None
         self.preview=None;self.last_mac='';self.events=[];self.selected=None;self.config=self.load_config();self.cloud_retry=0
         self.outbox=self.dir/'local-outbox';self.outbox.mkdir(exist_ok=True)
@@ -27,14 +28,32 @@ class StudioEngine(Engine):
         try:defaults.update({k:v for k,v in json.loads((self.dir/'printer-settings.json').read_text(encoding='utf-8')).items() if k in defaults})
         except (OSError,ValueError):pass
         return defaults
-    def enqueue(self,kind,**data):self.actions.put((kind,data))
+    def enqueue(self,kind,**data):
+        if kind=='start':
+            with self._start_lock:
+                if self.start_pending or self.running or self.busy or self.paused:return None
+                self.start_request=str(uuid.uuid4());self.start_pending=True
+                data['request_id']=self.start_request
+                self.actions.put((kind,data))
+                return self.start_request
+        self.actions.put((kind,data))
     def halt(self):
-        self.running=False;self.local_pause=True;self.message='已停止；当前已提交任务无法撤回';self.enqueue('stop')
+        with self._start_lock:
+            self.start_pending=False;self.running=False;self.local_pause=True
+        self.message='已停止；当前已提交任务无法撤回';self.enqueue('stop')
+    def process_start(self,data):
+        request=data['request_id']
+        with self._start_lock:
+            if request!=self.start_request or not self.start_pending:return
+        try:self.start_production(data.get('config'),request)
+        finally:
+            with self._start_lock:
+                if request==self.start_request:self.start_pending=False
     def log(self,text):
         self.events.append({'time':datetime.datetime.now().strftime('%H:%M:%S'),'text':text});self.events=self.events[-80:]
     def snapshot(self):
         current=self.library.get(self.selected);rows=self.local.rows()[:12]
-        return {'station_id':self.cloud.id,'version':VERSION,'bound':self.bound,'online':self.online,'pair_code':self.pair_code,'name':self.cloud_name or socket.gethostname(),'running':self.running,'busy':self.busy,'local_pause':self.local_pause,'paused':self.paused,'message':self.message,'error':self.last_error,'selected':self.selected,'templates':[{'id':i['id'],'name':i['bundle']['name'],'width':i['bundle']['template']['width'],'height':i['bundle']['template']['height'],'origin':i['origin']} for i in self.library.all()],'config':self.config,'ports':self.inventory.get('ports',[]),'printers':self.inventory.get('printers',[]),'preview':str(self.preview) if self.preview else '', 'last_mac':self.last_mac,'last_job':self.last_job,'events':self.events[-8:],'recent':[{'created':r['created_at'],'mac':r['mac'],'status':r['status'],'message':r['message']} for r in rows],'catalog_revision':self.catalog_revision,'assignment':current['bundle']['name'] if current else None}
+        return {'station_id':self.cloud.id,'version':VERSION,'bound':self.bound,'online':self.online,'pair_code':self.pair_code,'name':self.cloud_name or socket.gethostname(),'running':self.running,'busy':self.busy,'start_pending':self.start_pending,'start_request':self.start_request,'local_pause':self.local_pause,'paused':self.paused,'message':self.message,'error':self.last_error,'selected':self.selected,'templates':[{'id':i['id'],'name':i['bundle']['name'],'width':i['bundle']['template']['width'],'height':i['bundle']['template']['height'],'origin':i['origin']} for i in self.library.all()],'config':self.config,'ports':self.inventory.get('ports',[]),'printers':self.inventory.get('printers',[]),'preview':str(self.preview) if self.preview else '', 'last_mac':self.last_mac,'last_job':self.last_job,'events':self.events[-8:],'recent':[{'created':r['created_at'],'mac':r['mac'],'status':r['status'],'message':r['message']} for r in rows],'catalog_revision':self.catalog_revision,'assignment':current['bundle']['name'] if current else None}
     def update(self,**values):
         if not hasattr(self,'library'):return super().update(**values)
         value=self.snapshot();value.update(values);atomic_json(self.dir/'agent-status.json',value);self.emit(value)
@@ -51,7 +70,9 @@ class StudioEngine(Engine):
     def choose(self,key):
         if not self.library.get(key):raise ValueError('模板不存在')
         self.running=False;self.selected=key;self.last_error='';self.message='模板已选择，点击开始';atomic_json(self.dir/'studio-state.json',{'selected':key});self.render_preview()
-    def start_production(self,config=None):
+    def start_production(self,config=None,request=None):
+        if self.running:return
+        if self.paused:raise ValueError('管理端已暂停，请先解除暂停')
         self.config=checked_config(config or self.config)
         item=self.library.get(self.selected)
         if not item:raise ValueError('请先导入或选择一个模板')
@@ -59,7 +80,10 @@ class StudioEngine(Engine):
         self.prepare_image({'bundle':item['bundle'],'digest':item['id'],'config':self.config},{'mac':'02:00:00:00:AB:CD','model':'ESP32','date':datetime.date.today().isoformat()})
         atomic_json(self.dir/'printer-settings.json',{'interface':'system',**self.config})
         CalibrationStore(self.dir/'calibration.json').save(printer_key({'interface':'system','name':self.config['name']}),self.config['offset_x_mm'],self.config['offset_y_mm'])
-        self.local_pause=False;self.running=True;self.gate=ArrivalGate(self.config['vid'],self.config['pid']);self.last_error='';self.message='运行中 · 等待 ESP32 接入';self.log('开始生产：'+item['bundle']['name'])
+        with self._start_lock:
+            if request is not None and (request!=self.start_request or not self.start_pending):return
+            self.local_pause=False;self.running=True;self.gate=ArrivalGate(self.config['vid'],self.config['pid'])
+        self.last_error='';self.message='运行中 · 等待 ESP32 接入';self.log('开始生产：'+item['bundle']['name'])
     def local_print(self,port):
         from app import read_mac
         from system_print import submit
@@ -133,7 +157,7 @@ class StudioEngine(Engine):
                     if kind=='import':
                         items=self.library.import_file(data['path']);self.choose(items[0]['id']);self.log('导入 '+str(len(items))+' 个模板')
                     elif kind=='select':self.choose(data['id'])
-                    elif kind=='start':self.start_production(data.get('config'))
+                    elif kind=='start':self.process_start(data)
                     elif kind=='stop':self.running=False;self.local_pause=True;self.log('已停止接收新任务')
                     elif kind=='allow-remote':self.local_pause=False;self.message='已允许远程测试；本地生产未启动'
                     elif kind=='config':

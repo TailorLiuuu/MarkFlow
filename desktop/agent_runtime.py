@@ -17,7 +17,7 @@ from pathlib import Path
 from label_contract import validate_bundle,bundle_digest,execute_data,MAX_BUNDLE_BYTES
 from workstation import atomic_json,CalibrationStore,printer_key,ArrivalGate
 
-VERSION='0.4.0'
+VERSION='0.4.1'
 ORIGIN='https://toolbox.infinlab.cn'
 
 class CloudError(RuntimeError):

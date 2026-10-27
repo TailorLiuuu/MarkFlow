@@ -8,4 +8,4 @@ worker=EXE(pyz,a.scripts,[],exclude_binaries=True,name='LabelDeskWorker',debug=F
 coll=COLLECT(app,worker,a.binaries,a.datas,strip=False,upx=False,name='MarkFlow')
 
 if sys.platform=='darwin':
-    app_bundle=BUNDLE(coll,name='MarkFlow.app',bundle_identifier='cn.infinlab.labeldesk',info_plist={'NSHighResolutionCapable':True,'CFBundleShortVersionString':'0.4.0','NSHumanReadableCopyright':'InfinLab MarkFlow'})
+    app_bundle=BUNDLE(coll,name='MarkFlow.app',bundle_identifier='cn.infinlab.labeldesk',info_plist={'NSHighResolutionCapable':True,'CFBundleShortVersionString':'0.4.1','NSHumanReadableCopyright':'InfinLab MarkFlow'})

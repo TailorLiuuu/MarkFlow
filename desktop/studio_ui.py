@@ -11,7 +11,8 @@ QSS='''
 QWidget{font-family:"Segoe UI","Microsoft YaHei UI";font-size:13px;color:#1c2940;background:#f4f6fa;}
 QMainWindow{background:#f4f6fa} QFrame#sidebar{background:#fff;border-right:1px solid #e3e8ef} QFrame#card{background:white;border:1px solid #e3e8ef;border-radius:12px}
 QLabel{background:transparent} QLabel#brand{font-size:23px;font-weight:700;color:#142642} QLabel#muted{color:#7c899c;font-size:12px} QLabel#heading{font-size:24px;font-weight:700} QLabel#section{font-size:14px;font-weight:600} QLabel#state{background:#e8f0ff;color:#1f58c7;border-radius:12px;padding:7px 14px;font-weight:600} QLabel#error{color:#b74d3a}
-QPushButton{background:#fff;border:1px solid #dbe2ed;border-radius:7px;padding:10px 17px;font-weight:600} QPushButton:hover{background:#edf3ff;border-color:#a9c3f3} QPushButton:disabled{background:#f1f3f7;color:#a1aabb;border-color:#e4e8ef} QPushButton#primary{background:#2864e8;color:white;border-color:#2864e8} QPushButton#primary:hover{background:#1b52d0} QPushButton#stop{color:#a54335;background:#fff8f6;border-color:#edcfc8} QPushButton#quiet{border:none;background:transparent;color:#64738b;padding:6px}
+QPushButton{background:#fff;border:1px solid #dbe2ed;border-radius:7px;padding:10px 17px;font-weight:600} QPushButton:hover{background:#edf3ff;border-color:#a9c3f3} QPushButton:disabled{background:#f1f3f7;color:#a1aabb;border-color:#e4e8ef} QPushButton#primary{background:#2864e8;color:white;border-color:#2864e8} QPushButton#primary:enabled:hover{background:#1b52d0} QPushButton#stop{color:#a54335;background:#fff8f6;border-color:#edcfc8} QPushButton#quiet{border:none;background:transparent;color:#64738b;padding:6px}
+QPushButton#primary:disabled,QPushButton#stop:disabled{background:#e6eaf0;color:#8b96a7;border-color:#dce1e8}
 QListWidget{background:white;border:none;outline:none;padding:0px} QListWidget::item{padding:13px 11px;margin:3px 8px;border-radius:8px;color:#56647b} QListWidget::item:selected{background:#eaf1ff;color:#2258c4} QListWidget::item:hover{background:#f2f6fc}
 QPlainTextEdit,QTableWidget{background:white;border:0;gridline-color:#edf0f5;selection-background-color:#edf3ff;selection-color:#234b8c} QHeaderView::section{background:#f7f9fc;border:none;padding:9px;color:#728099;font-size:12px} QTableWidget::item{padding:8px}
 QTabWidget::pane{border:1px solid #e3e8ef;background:white;border-radius:10px} QTabBar::tab{background:transparent;padding:10px 18px;color:#7c899c} QTabBar::tab:selected{color:#235ed9;font-weight:600;border-bottom:2px solid #2864e8}
@@ -42,14 +43,14 @@ class Preview(QWidget):
 
 class Window(QMainWindow):
     def __init__(self,engine):
-        super().__init__();self.engine=engine;self.state={};self.items_key=None;self.preview_key=None;self.rows_key=None
+        super().__init__();self.engine=engine;self.state={};self.items_key=None;self.preview_key=None;self.rows_key=None;self.pending_start=None
         self.setWindowTitle('印序 MarkFlow');self.setWindowIcon(QIcon(str(BASE/'assets/markflow.ico')));self.resize(1180,790);self.setMinimumSize(960,680)
         root=QWidget();self.setCentralWidget(root);outer=QHBoxLayout(root);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
         side=QFrame();side.setObjectName('sidebar');side.setFixedWidth(262);sl=QVBoxLayout(side);sl.setContentsMargins(16,26,16,20);sl.setSpacing(15)
         brand=QHBoxLayout();icon=label('');icon.setPixmap(QPixmap(str(BASE/'assets/markflow.png')).scaled(45,45,Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation));brand.addWidget(icon)
         bl=QVBoxLayout();bl.addWidget(label('印序','brand'));bl.addWidget(label('MARKFLOW  /  标签工作室','muted'));brand.addLayout(bl);brand.addStretch();sl.addLayout(brand)
         sl.addSpacing(15);row=QHBoxLayout();row.addWidget(label('我的模板','section'));self.count=label('0','muted');row.addStretch();row.addWidget(self.count);sl.addLayout(row)
-        imp=QPushButton('＋  导入模板');imp.setObjectName('primary');imp.clicked.connect(self.import_template);sl.addWidget(imp)
+        imp=QPushButton('＋  导入模板');self.import_button=imp;imp.setObjectName('primary');imp.clicked.connect(self.import_template);sl.addWidget(imp)
         self.templates=QListWidget();self.templates.currentItemChanged.connect(self.select_template);sl.addWidget(self.templates,1)
         self.connection=label('○  管理端连接中','muted');sl.addWidget(self.connection)
         self.pairing=label('');self.pairing.setWordWrap(True);self.pairing.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse);sl.addWidget(self.pairing)
@@ -65,10 +66,25 @@ class Window(QMainWindow):
         self.records=QTableWidget(0,3);self.records.setHorizontalHeaderLabels(['时间','设备 MAC','结果']);self.records.verticalHeader().hide();self.records.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents);self.records.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents);self.records.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.Stretch);self.records.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.logs=QPlainTextEdit();self.logs.setReadOnly(True);self.tabs.addTab(self.records,'最近记录');self.tabs.addTab(self.logs,'运行消息');bodyl.addWidget(self.tabs)
         controls=card();cl=QHBoxLayout(controls);cl.setContentsMargins(16,14,16,14);statusbox=QVBoxLayout();self.status=label('准备就绪','section');self.status.setWordWrap(True);self.error=label('','error');self.error.setWordWrap(True);statusbox.addWidget(self.status);statusbox.addWidget(self.error);cl.addLayout(statusbox,1)
-        settings=QPushButton('打印设置');settings.clicked.connect(self.settings);cl.addWidget(settings)
-        self.start=QPushButton('▶  开始');self.start.setObjectName('primary');self.start.setMinimumWidth(105);self.start.clicked.connect(lambda:engine.enqueue('start'));cl.addWidget(self.start)
+        settings=QPushButton('打印设置');self.settings_button=settings;settings.clicked.connect(self.settings);cl.addWidget(settings)
+        self.start=QPushButton('▶  开始');self.start.setObjectName('primary');self.start.setMinimumWidth(105);self.start.clicked.connect(self.start_clicked);cl.addWidget(self.start)
         self.stop=QPushButton('■  停止');self.stop.setObjectName('stop');self.stop.clicked.connect(engine.halt);cl.addWidget(self.stop);bodyl.addWidget(controls)
         footer=QHBoxLayout();footer.addWidget(label('生产自动去重 · 测试打印单独记录','muted'));footer.addStretch();self.allow=QPushButton('允许远程测试');self.allow.setObjectName('quiet');self.allow.clicked.connect(lambda:engine.enqueue('allow-remote'));footer.addWidget(self.allow);bodyl.addLayout(footer)
+    def start_clicked(self):
+        if self.pending_start or not self.start.isEnabled():return
+        self.start.setEnabled(False)
+        self.start.setText('启动中…')
+        self.pending_start=self.engine.enqueue('start')
+        self.update_controls()
+    def update_controls(self):
+        s=self.state
+        pending=bool(self.pending_start) or s.get('start_pending',False)
+        running=s.get('running',False);busy=s.get('busy',False)
+        locked=pending or running or busy
+        self.start.setEnabled(not locked and not s.get('paused',False) and bool(s.get('selected')))
+        self.start.setText('启动中…' if pending else '运行中' if running else '▶  开始')
+        self.stop.setEnabled(locked or not s.get('local_pause',False))
+        self.templates.setEnabled(not locked);self.import_button.setEnabled(not locked);self.settings_button.setEnabled(not locked)
     def stat(self,title,value):
         f=card();l=QVBoxLayout(f);l.setContentsMargins(16,12,16,12);l.addWidget(label(title,'muted'));f.value=label(value,'section');f.value.setWordWrap(True);l.addWidget(f.value);return f
     def import_template(self):
@@ -90,6 +106,7 @@ class Window(QMainWindow):
         if d.exec():
             result={k:w.currentData() if isinstance(w,QComboBox) else w.value() for k,w in widgets.items()};self.engine.enqueue('config',config=result)
     def changed(self,s):
+        if self.pending_start==s.get('start_request') and not s.get('start_pending',False):self.pending_start=None
         self.state=s;key=json.dumps(s['templates'],ensure_ascii=False)
         if key!=self.items_key:
             self.templates.blockSignals(True);self.templates.clear()
@@ -104,7 +121,7 @@ class Window(QMainWindow):
         self.connection.setText('●  管理端已连接' if s['online'] else '○  本地模式 · 管理端未连接');self.pairing.setText('配对码  '+s['pair_code'] if s.get('pair_code') and not s['bound'] else '电脑  '+s['name'])
         self.badge.setText('正在执行' if s['busy'] else '管理端已暂停' if s['paused'] else '生产运行中' if s['running'] else '已停止' if s['local_pause'] else '准备就绪')
         self.printer_card.value.setText(s['config'].get('name') or '尚未选择');ports=[p['port'] for p in s['ports'] if p['vid']==s['config']['vid'] and p['pid']==s['config']['pid']];self.device_card.value.setText(' · '.join(ports) if ports else '等待连接 ESP32');self.result_card.value.setText(s['last_mac'] or '—')
-        self.status.setText(s['message']);self.error.setText(s['error']);self.error.setVisible(bool(s['error']));self.start.setEnabled(not s['running'] and not s['busy'] and bool(s['selected']));self.stop.setEnabled(s['running'] or s['busy'] or not s['local_pause']);self.allow.setVisible(s['local_pause']);self.templates.setEnabled(not s['busy'])
+        self.status.setText(s['message']);self.error.setText(s['error']);self.error.setVisible(bool(s['error']));self.update_controls();self.allow.setVisible(s['local_pause'] and not self.pending_start)
         self.preview_note.setText('最近设备预览 · '+s['last_mac'] if s['last_mac'] else '预览示例 · 实际打印时自动读取设备 MAC')
         path=s['preview'];pk=(path,Path(path).stat().st_mtime_ns if path and Path(path).exists() else 0)
         if pk!=self.preview_key:self.preview.load(path);self.preview_key=pk
