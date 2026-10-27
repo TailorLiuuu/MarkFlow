@@ -1,5 +1,6 @@
 """Package only a clean PyInstaller output, never a user data directory."""
 import hashlib
+import json
 import re
 import zipfile
 from pathlib import Path
@@ -10,9 +11,10 @@ VERSION = re.search(r"^VERSION=['\"]([^'\"]+)", (ROOT / 'desktop/agent_runtime.p
 
 def main():
     source = ROOT / 'dist/MarkFlow'
-    for name in ('MarkFlow.exe', 'LabelDeskWorker.exe', '_internal'):
+    for name in ('MarkFlow.exe', 'LabelDeskWorker.exe', 'MarkFlowUpdater.exe', '_internal'):
         if not (source / name).exists():
             raise SystemExit(f'Missing build output: {name}')
+    (source / 'version.json').write_text(json.dumps({'product':'MarkFlow','version':VERSION,'platform':'windows-x64'}),encoding='utf-8')
     files = sorted(p for p in source.rglob('*') if p.is_file())
     forbidden = {'agent-identity.json', 'agent-status.json', 'printer-settings.json', 'calibration.json', 'studio-state.json', 'active.labeljob'}
     private_dirs = {'agent-jobs', 'agent-commands', 'local-outbox', 'print-requests'}

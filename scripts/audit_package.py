@@ -23,7 +23,7 @@ def check_code(code):
             check_text(value)
 
 def audit(source):
-    modules = {p.stem for p in (ROOT / 'desktop').glob('*.py')} - {'app'}
+    modules = {p.stem for p in (ROOT / 'desktop').glob('*.py')} - {'app', 'updater_worker'}
     checked = 0
     for filename in ('MarkFlow.exe', 'LabelDeskWorker.exe'):
         archive = CArchiveReader(str(source / filename))
@@ -33,6 +33,10 @@ def audit(source):
         for name in modules:
             check_code(pyz.extract(name))
             checked += 1
+    helper = CArchiveReader(str(source / 'MarkFlowUpdater.exe'))
+    check_code(marshal.loads(helper.extract('updater_worker')))
+    helper_pyz = helper.open_embedded_archive(next(n for n in helper.toc if n.endswith('.pyz')))
+    check_code(helper_pyz.extract('update_core'))
     for folder in ('assets', 'examples'):
         expected = list((ROOT / 'desktop' / folder).glob('*'))
         for original in expected:

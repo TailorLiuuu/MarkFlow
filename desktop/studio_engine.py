@@ -12,6 +12,7 @@ class StudioEngine(Engine):
         super().__init__(directory,emit)
         self.library=TemplateLibrary(self.dir/'templates');self.actions=queue.Queue();self.running=False;self.busy=False
         self.start_request=None;self.start_pending=False;self._start_lock=threading.Lock()
+        self.update_installing=False;self.update_error="";self.ready=False;self._pause_before_update=False
         self.local_pause=False;self.online=False;self.cloud_name='';self.pair_code='';self.catalog_revision='';self.legacy_applied=None
         self.preview=None;self.last_mac='';self.events=[];self.selected=None;self.config=self.load_config();self.cloud_retry=0
         self.outbox=self.dir/'local-outbox';self.outbox.mkdir(exist_ok=True)
@@ -31,7 +32,7 @@ class StudioEngine(Engine):
     def enqueue(self,kind,**data):
         if kind=='start':
             with self._start_lock:
-                if self.start_pending or self.running or self.busy or self.paused:return None
+                if self.start_pending or self.running or self.busy or self.paused or self.update_installing:return None
                 self.start_request=str(uuid.uuid4());self.start_pending=True
                 data['request_id']=self.start_request
                 self.actions.put((kind,data))
@@ -41,6 +42,14 @@ class StudioEngine(Engine):
         with self._start_lock:
             self.start_pending=False;self.running=False;self.local_pause=True
         self.message='已停止；当前已提交任务无法撤回';self.enqueue('stop')
+    def prepare_update(self):
+        with self._start_lock:
+            self.update_error=''
+            if self.running or self.busy or self.start_pending:
+                self.update_error='生产正在运行，请先停止再更新。';return False
+            self._pause_before_update=self.local_pause
+            self.update_installing=True;self.local_pause=True
+        self.message='正在更新软件，已停止接收打印任务';return True
     def process_start(self,data):
         request=data['request_id']
         with self._start_lock:
@@ -53,7 +62,7 @@ class StudioEngine(Engine):
         self.events.append({'time':datetime.datetime.now().strftime('%H:%M:%S'),'text':text});self.events=self.events[-80:]
     def snapshot(self):
         current=self.library.get(self.selected);rows=self.local.rows()[:12]
-        return {'station_id':self.cloud.id,'version':VERSION,'bound':self.bound,'online':self.online,'pair_code':self.pair_code,'name':self.cloud_name or socket.gethostname(),'running':self.running,'busy':self.busy,'start_pending':self.start_pending,'start_request':self.start_request,'local_pause':self.local_pause,'paused':self.paused,'message':self.message,'error':self.last_error,'selected':self.selected,'templates':[{'id':i['id'],'name':i['bundle']['name'],'width':i['bundle']['template']['width'],'height':i['bundle']['template']['height'],'origin':i['origin']} for i in self.library.all()],'config':self.config,'ports':self.inventory.get('ports',[]),'printers':self.inventory.get('printers',[]),'preview':str(self.preview) if self.preview else '', 'last_mac':self.last_mac,'last_job':self.last_job,'events':self.events[-8:],'recent':[{'created':r['created_at'],'mac':r['mac'],'status':r['status'],'message':r['message']} for r in rows],'catalog_revision':self.catalog_revision,'assignment':current['bundle']['name'] if current else None}
+        return {'station_id':self.cloud.id,'version':VERSION,'bound':self.bound,'online':self.online,'pair_code':self.pair_code,'name':self.cloud_name or socket.gethostname(),'running':self.running,'busy':self.busy,'start_pending':self.start_pending,'start_request':self.start_request,'update_installing':self.update_installing,'update_error':self.update_error,'local_pause':self.local_pause,'paused':self.paused,'message':self.message,'error':self.last_error,'selected':self.selected,'templates':[{'id':i['id'],'name':i['bundle']['name'],'width':i['bundle']['template']['width'],'height':i['bundle']['template']['height'],'origin':i['origin']} for i in self.library.all()],'config':self.config,'ports':self.inventory.get('ports',[]),'printers':self.inventory.get('printers',[]),'preview':str(self.preview) if self.preview else '', 'last_mac':self.last_mac,'last_job':self.last_job,'events':self.events[-8:],'recent':[{'created':r['created_at'],'mac':r['mac'],'status':r['status'],'message':r['message']} for r in rows],'catalog_revision':self.catalog_revision,'assignment':current['bundle']['name'] if current else None}
     def update(self,**values):
         if not hasattr(self,'library'):return super().update(**values)
         value=self.snapshot();value.update(values);atomic_json(self.dir/'agent-status.json',value);self.emit(value)
@@ -149,19 +158,24 @@ class StudioEngine(Engine):
         self.sync_catalog(r.get('catalog'))
         if r.get('commands'):self.remote_test(r['commands'][0]);self.flush()
     def run(self):
-        self.render_preview()
+        self.render_preview();self.ready=True
         while not self.stop.is_set():
             try:
                 while not self.actions.empty():
                     kind,data=self.actions.get_nowait()
+                    if self.update_installing and kind!='cancel-update':continue
                     if kind=='import':
                         items=self.library.import_file(data['path']);self.choose(items[0]['id']);self.log('导入 '+str(len(items))+' 个模板')
                     elif kind=='select':self.choose(data['id'])
                     elif kind=='start':self.process_start(data)
+                    elif kind=='prepare-update':self.prepare_update()
+                    elif kind=='cancel-update':self.update_installing=False;self.local_pause=self._pause_before_update;self.message='更新已取消，原有程序未变动'
                     elif kind=='stop':self.running=False;self.local_pause=True;self.log('已停止接收新任务')
                     elif kind=='allow-remote':self.local_pause=False;self.message='已允许远程测试；本地生产未启动'
                     elif kind=='config':
                         self.config=checked_config(data['config']);self.running=False;self.gate=None;atomic_json(self.dir/'printer-settings.json',{'interface':'system',**self.config});self.message='打印设置已保存，点击开始';self.render_preview()
+                if self.update_installing:
+                    self.update();self.stop.wait(.3);continue
                 ports=self.devices()
                 if time.monotonic()>=self.cloud_retry:
                     try:self.cloud_tick();self.cloud_retry=time.monotonic()+3

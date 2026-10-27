@@ -24,7 +24,7 @@ class ControlsTests(unittest.TestCase):
             self.engine = StudioEngine(Path(self.temp.name), lambda _: None)
         self.engine.config['name'] = 'Test Printer'
         self.engine.prepare_image = Mock()
-        self.window = Window(self.engine)
+        self.window = Window(self.engine, updates_enabled=False)
         self.window.changed(self.engine.snapshot())
         self.addCleanup(self.window.close)
 
@@ -87,6 +87,37 @@ class ControlsTests(unittest.TestCase):
         self.window.changed(self.engine.snapshot())
         self.assertFalse(self.window.start.isEnabled())
         self.assertIsNone(self.engine.enqueue('start'))
+
+    def test_update_prompt_does_not_download_or_install_without_a_click(self):
+        from PySide6.QtWidgets import QWidget, QVBoxLayout
+        from update_ui import Updates
+        panel = QWidget(self.window)
+        updates = Updates(self.window, self.engine, QVBoxLayout(panel), automatic=False)
+        updates.task = Mock()
+        notices = []
+        updates.available.connect(notices.append)
+        updates.check(True)
+        self.assertFalse(updates.button.isEnabled())
+        updates.finished('checked', {'version':'0.5.0'})
+        self.assertEqual(notices, ['0.5.0'])
+        self.assertTrue(updates.button.isEnabled())
+        self.assertFalse(updates.download.isHidden())
+        self.assertEqual(updates.task.call_count, 1)
+        self.assertFalse(self.engine.update_installing)
+        self.engine.running = True
+        updates.begin_download()
+        self.assertIn('停止生产', updates.info.text())
+        self.assertEqual(updates.task.call_count, 1)
+        updates.check(True)
+        updates.finished('error', '网络暂不可用')
+        self.assertTrue(updates.button.isEnabled())
+        self.assertEqual(updates.phase, 'idle')
+
+    def test_install_preparation_disables_production_controls(self):
+        self.assertTrue(self.engine.prepare_update())
+        self.window.changed(self.engine.snapshot())
+        for button in (self.window.start,self.window.stop,self.window.settings_button,self.window.import_button):
+            self.assertFalse(button.isEnabled())
 
 
 if __name__ == '__main__':

@@ -42,7 +42,7 @@ class Preview(QWidget):
     def load(self,path):self.pix=QPixmap(path);self.update()
 
 class Window(QMainWindow):
-    def __init__(self,engine):
+    def __init__(self,engine,updates_enabled=True):
         super().__init__();self.engine=engine;self.state={};self.items_key=None;self.preview_key=None;self.rows_key=None;self.pending_start=None
         self.setWindowTitle('印序 MarkFlow');self.setWindowIcon(QIcon(str(BASE/'assets/markflow.ico')));self.resize(1180,790);self.setMinimumSize(960,680)
         root=QWidget();self.setCentralWidget(root);outer=QHBoxLayout(root);outer.setContentsMargins(0,0,0,0);outer.setSpacing(0)
@@ -54,7 +54,12 @@ class Window(QMainWindow):
         self.templates=QListWidget();self.templates.currentItemChanged.connect(self.select_template);sl.addWidget(self.templates,1)
         self.connection=label('○  管理端连接中','muted');sl.addWidget(self.connection)
         self.pairing=label('');self.pairing.setWordWrap(True);self.pairing.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse);sl.addWidget(self.pairing)
-        sl.addWidget(label('本地导入 · 云端接收\nWindows 工站  '+VERSION,'muted'));outer.addWidget(side)
+        sl.addWidget(label('本地导入 · 云端接收\nWindows 工站  '+VERSION,'muted'))
+        self.updates=None
+        if updates_enabled:
+            from update_ui import Updates
+            self.updates=Updates(self,engine,sl)
+        outer.addWidget(side)
         body=QWidget();bodyl=QVBoxLayout(body);bodyl.setContentsMargins(26,22,26,18);bodyl.setSpacing(14);outer.addWidget(body,1)
         h=QHBoxLayout();head=QVBoxLayout();head.addWidget(label('标签生产','heading'));head.addWidget(label('选择一个模板，让每台设备都有自己的标识。','muted'));h.addLayout(head);h.addStretch();self.badge=label('就绪','state');h.addWidget(self.badge);bodyl.addLayout(h)
         summary=QHBoxLayout();self.printer_card=self.stat('打印机','尚未选择');self.device_card=self.stat('设备','等待连接 ESP32');self.result_card=self.stat('最近设备','—')
@@ -80,10 +85,10 @@ class Window(QMainWindow):
         s=self.state
         pending=bool(self.pending_start) or s.get('start_pending',False)
         running=s.get('running',False);busy=s.get('busy',False)
-        locked=pending or running or busy
+        locked=pending or running or busy or s.get('update_installing',False)
         self.start.setEnabled(not locked and not s.get('paused',False) and bool(s.get('selected')))
         self.start.setText('启动中…' if pending else '运行中' if running else '▶  开始')
-        self.stop.setEnabled(locked or not s.get('local_pause',False))
+        self.stop.setEnabled(not s.get('update_installing',False) and (locked or not s.get('local_pause',False)))
         self.templates.setEnabled(not locked);self.import_button.setEnabled(not locked);self.settings_button.setEnabled(not locked)
     def stat(self,title,value):
         f=card();l=QVBoxLayout(f);l.setContentsMargins(16,12,16,12);l.addWidget(label(title,'muted'));f.value=label(value,'section');f.value.setWordWrap(True);l.addWidget(f.value);return f
@@ -107,7 +112,9 @@ class Window(QMainWindow):
             result={k:w.currentData() if isinstance(w,QComboBox) else w.value() for k,w in widgets.items()};self.engine.enqueue('config',config=result)
     def changed(self,s):
         if self.pending_start==s.get('start_request') and not s.get('start_pending',False):self.pending_start=None
-        self.state=s;key=json.dumps(s['templates'],ensure_ascii=False)
+        self.state=s
+        if self.updates:self.updates.state_changed(s)
+        key=json.dumps(s['templates'],ensure_ascii=False)
         if key!=self.items_key:
             self.templates.blockSignals(True);self.templates.clear()
             for item in s['templates']:
@@ -147,7 +154,20 @@ def main():
     if sys.platform=='win32' and getattr(sys,'frozen',False):
         import winreg
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER,r'Software\Microsoft\Windows\CurrentVersion\Run') as key:winreg.SetValueEx(key,'InfinLabLabelDesk',0,winreg.REG_SZ,'"'+sys.executable+'" --tray')
+    if window.updates:
+        window.updates.available.connect(lambda v:tray.showMessage('印序有新版本',v+' 已发布，可在软件中下载更新。'))
+        menu.addAction('检查更新',lambda:(window.show(),window.updates.check(True)))
     worker=threading.Thread(target=engine.run,daemon=True);worker.start()
+    if '--update-health' in sys.argv:
+        from update_core import atomic_json
+        import uuid
+        health=Path(sys.argv[sys.argv.index('--update-health')+1]).resolve();nonce=sys.argv[sys.argv.index('--update-nonce')+1];uuid.UUID(nonce)
+        if health.name!='health.json' or health.parent.parent!=(directory/'updates').resolve():raise ValueError('更新启动检查路径无效')
+        health_timer=QTimer(window)
+        def mark_healthy():
+            if worker.is_alive() and engine.ready:
+                atomic_json(health,{'version':VERSION,'nonce':nonce});health_timer.stop()
+        health_timer.timeout.connect(mark_healthy);health_timer.start(500)
     if '--tray' not in sys.argv:window.show()
     if '--capture-ui' in sys.argv:
         target=Path(sys.argv[sys.argv.index('--capture-ui')+1]);target.parent.mkdir(parents=True,exist_ok=True);QTimer.singleShot(7000,lambda:window.grab().save(str(target)))
