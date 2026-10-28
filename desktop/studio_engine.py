@@ -1,11 +1,20 @@
 """MarkFlow: local template production with optional managed template delivery."""
 import datetime,json,platform,queue,socket,time,uuid,threading
 from pathlib import Path
+from concurrent.futures import Future
 from agent_runtime import Engine,CloudError,VERSION
 from template_library import TemplateLibrary
 from workstation import atomic_json,ArrivalGate,CalibrationStore,printer_key
 from label_contract import bundle_digest,execute_data
 from label_agent_config import checked_config
+
+def background_call(action):
+    future=Future()
+    def work():
+        try:future.set_result(action())
+        except Exception as error:future.set_exception(error)
+    threading.Thread(target=work,daemon=True).start()
+    return future
 
 class StudioEngine(Engine):
     def __init__(self,directory,emit):
@@ -15,6 +24,9 @@ class StudioEngine(Engine):
         self.update_installing=False;self.update_error="";self.ready=False;self._pause_before_update=False
         self.local_pause=False;self.online=False;self.cloud_name='';self.pair_code='';self.catalog_revision='';self.legacy_applied=None
         self.preview=None;self.last_mac='';self.events=[];self.selected=None;self.config=self.load_config();self.cloud_retry=0
+        self._cloud_cycle=None;self._cloud_future=None;self._printers_future=None;self._printers_retry=0;self._printers=[]
+        previous=self.local.recent(1)
+        if previous:self.last_mac=previous[0]['mac']
         self.outbox=self.dir/'local-outbox';self.outbox.mkdir(exist_ok=True)
         for candidate in [self.dir/'active.labeljob',Path(__file__).parent/'examples/ringhi-mac.labeljob']:
             if candidate.exists():
@@ -61,13 +73,23 @@ class StudioEngine(Engine):
     def log(self,text):
         self.events.append({'time':datetime.datetime.now().strftime('%H:%M:%S'),'text':text});self.events=self.events[-80:]
     def snapshot(self):
-        current=self.library.get(self.selected);rows=self.local.rows()[:12]
-        return {'station_id':self.cloud.id,'version':VERSION,'bound':self.bound,'online':self.online,'pair_code':self.pair_code,'name':self.cloud_name or socket.gethostname(),'running':self.running,'busy':self.busy,'start_pending':self.start_pending,'start_request':self.start_request,'update_installing':self.update_installing,'update_error':self.update_error,'local_pause':self.local_pause,'paused':self.paused,'message':self.message,'error':self.last_error,'selected':self.selected,'templates':[{'id':i['id'],'name':i['bundle']['name'],'width':i['bundle']['template']['width'],'height':i['bundle']['template']['height'],'origin':i['origin']} for i in self.library.all()],'config':self.config,'ports':self.inventory.get('ports',[]),'printers':self.inventory.get('printers',[]),'preview':str(self.preview) if self.preview else '', 'last_mac':self.last_mac,'last_job':self.last_job,'events':self.events[-8:],'recent':[{'created':r['created_at'],'mac':r['mac'],'status':r['status'],'message':r['message']} for r in rows],'catalog_revision':self.catalog_revision,'assignment':current['bundle']['name'] if current else None}
+        current=self.library.get(self.selected);rows=self.local.recent();counts=self.local.print_counts()
+        return {'station_id':self.cloud.id,'version':VERSION,'bound':self.bound,'online':self.online,'pair_code':self.pair_code,'name':self.cloud_name or socket.gethostname(),'running':self.running,'busy':self.busy,'start_pending':self.start_pending,'start_request':self.start_request,'update_installing':self.update_installing,'update_error':self.update_error,'local_pause':self.local_pause,'paused':self.paused,'message':self.message,'error':self.last_error,'selected':self.selected,'templates':[{'id':i['id'],'name':i['bundle']['name'],'width':i['bundle']['template']['width'],'height':i['bundle']['template']['height'],'origin':i['origin']} for i in self.library.all()],'config':self.config,'ports':self.inventory.get('ports',[]),'printers':self.inventory.get('printers',[]),'preview':str(self.preview) if self.preview else '', 'last_mac':self.last_mac,'print_count':counts.get(self.last_mac.upper(),0),'last_job':self.last_job,'events':self.events[-8:],'recent':[{'created':r['created_at'],'mac':r['mac'],'status':r['status'],'message':r['message'],'print_count':counts.get(r['mac'].upper(),0)} for r in rows],'catalog_revision':self.catalog_revision,'assignment':current['bundle']['name'] if current else None}
     def update(self,**values):
         if not hasattr(self,'library'):return super().update(**values)
         value=self.snapshot();value.update(values);atomic_json(self.dir/'agent-status.json',value);self.emit(value)
     def devices(self):
-        ports=super().devices();self.inventory.update(current_printer=dict(self.config),capabilities=['template_library','test_print','local_import','embedded_png','esp32_mac','system_print','calibration'],running=self.running,selected=self.selected,catalog_revision=self.catalog_revision,last_mac=self.last_mac,busy=self.busy)
+        import serial.tools.list_ports
+        from PySide6.QtPrintSupport import QPrinterInfo
+        # Driver enumeration can be slow; it must never delay USB arrival detection.
+        if self._printers_future is not None and self._printers_future.done():
+            try:self._printers=self._printers_future.result()[:30]
+            except Exception:self._printers=[]
+            self._printers_future=None;self._printers_retry=time.monotonic()+10
+        if self._printers_future is None and time.monotonic()>=self._printers_retry:
+            self._printers_future=background_call(QPrinterInfo.availablePrinterNames)
+        ports=list(serial.tools.list_ports.comports())
+        self.inventory={'printers':self._printers,'ports':[{'port':p.device,'vid':p.vid,'pid':p.pid,'description':p.description[:100]} for p in ports[:50]],'current_printer':dict(self.config),'capabilities':['template_library','test_print','local_import','embedded_png','esp32_mac','system_print','calibration'],'running':self.running,'selected':self.selected,'catalog_revision':self.catalog_revision,'last_mac':self.last_mac,'busy':self.busy,'message':self.message[-500:],'error':self.last_error[-1000:],'local_pause':self.local_pause,'contract':1}
         return ports
     def render_preview(self):
         item=self.library.get(self.selected)
@@ -91,22 +113,24 @@ class StudioEngine(Engine):
         CalibrationStore(self.dir/'calibration.json').save(printer_key({'interface':'system','name':self.config['name']}),self.config['offset_x_mm'],self.config['offset_y_mm'])
         with self._start_lock:
             if request is not None and (request!=self.start_request or not self.start_pending):return
-            self.local_pause=False;self.running=True;self.gate=ArrivalGate(self.config['vid'],self.config['pid'])
+            self.local_pause=False;self.running=True;self.gate=ArrivalGate(self.config['vid'],self.config['pid'],settle=.4,absent=1.0)
         self.last_error='';self.message='运行中 · 等待 ESP32 接入';self.log('开始生产：'+item['bundle']['name'])
-    def local_print(self,port):
+    def local_print(self,port,detected_at=None):
         from app import read_mac
         from system_print import submit
-        self.busy=True;self.message='读取 '+port+' 的设备 MAC';self.update();local_id=None
+        self.busy=True;self.message='读取 '+port+' 的设备 MAC';self.update();local_id=None;started=time.monotonic();timing={}
         try:
-            source=read_mac(port);self.last_mac=source['mac'];source.update(model=source['chip'],date=datetime.date.today().isoformat());item=self.library.get(self.selected)
+            source=read_mac(port);timing['read_mac_seconds']=round(time.monotonic()-started,3);prepared=time.monotonic();self.last_mac=source['mac'];source.update(model=source['chip'],date=datetime.date.today().isoformat());item=self.library.get(self.selected)
             a={'bundle':item['bundle'],'digest':item['id'],'config':dict(self.config)}
             bundle,fields,image,proof,cfg=self.prepare_image(a,source)
-            if not self.running or self.local_pause:raise ValueError('已停止，未提交打印')
-            if self.local.duplicate(fields['device_id'],item['id']):self.message='该设备在此模板下已有打印记录，已跳过';self.log(self.message);return
+            timing['prepare_seconds']=round(time.monotonic()-prepared,3)
+            if not self.running or self.local_pause or (self.bound and self.paused):raise ValueError('已停止，未提交打印')
             local_id=self.local.start(fields,bundle,item['id'],{'interface':'system',**cfg},'本地生产')
-            self.message='正在打印 1 张';self.update();image.save(str(self.dir/'agent-last-label.png'))
+            self.message='正在打印 1 张';self.update();submitted=time.monotonic();image.save(str(self.dir/'agent-last-label.png'))
             result=submit(cfg['name'],bundle['template'],cfg['dpi'],image,proof,cfg['paper_mode']);self.local.finish(local_id,result['status'],result['message'])
-            self.message=result['message'];self.last_error='';self.last_job={'job_id':local_id,'mac':source['mac'],**result}
+            timing['submit_seconds']=round(time.monotonic()-submitted,3);timing['total_seconds']=round(time.monotonic()-(detected_at if detected_at is not None else started),3)
+            self.message=result['message'];self.last_error='';self.last_job={'job_id':local_id,'mac':source['mac'],**result,'timing':timing}
+            self.log('本次耗时：检测到提交 '+str(timing['total_seconds'])+' 秒；读 MAC '+str(timing['read_mac_seconds'])+' 秒，排版与校验 '+str(timing['prepare_seconds'])+' 秒，提交 '+str(timing['submit_seconds'])+' 秒')
             self.queue_local_result(local_id,item,source,result)
         except Exception as e:
             self.last_error=str(e);self.message='执行失败：'+str(e);self.log(self.message)
@@ -117,11 +141,11 @@ class StudioEngine(Engine):
             self.busy=False;self.render_preview();self.update()
     def queue_local_result(self,identifier,item,source,result):
         atomic_json(self.outbox/(identifier+'.json'),{'id':identifier,'mac':source['mac'],'name':item['bundle']['name'],'digest':item['id'],'status':result['status'],'message':result['message'],'queue_job_id':result.get('job_id'),'time':datetime.datetime.now().isoformat(),'reported':False})
-    def sync_catalog(self,catalog):
+    def sync_catalog(self,catalog,downloaded=None):
         if not catalog or catalog['revision']==self.catalog_revision:return
         for item in catalog['items']:
             if self.library.get(item['digest']):continue
-            data=self.cloud.call('catalog-template',{'template':item['id'],'revision':item['revision']})
+            data=downloaded[item['digest']] if downloaded is not None else self.cloud.call('catalog-template',{'template':item['id'],'revision':item['revision']})
             if bundle_digest(data['bundle'])!=item['digest']:raise ValueError('收到的模板摘要不匹配')
             self.library.put(data['bundle'],'管理端下发',{'id':item['id'],'revision':item['revision']})
         self.catalog_revision=catalog['revision'];self.log('收到模板列表：'+str(len(catalog['items']))+' 个');self.update()
@@ -142,21 +166,47 @@ class StudioEngine(Engine):
         except Exception as e:c['message']=str(e)[:1000];self.last_error=c['message'];self.message='远程测试失败：'+c['message'];self.log(self.message)
         finally:
             self.assignment=old;self.busy=False;c['done']=True;atomic_json(path,c);self.update()
-    def cloud_tick(self):
+    def cloud_cycle(self):
         if not self.bound:
-            r=self.cloud.call('enroll',{'host':socket.gethostname(),'platform':platform.system()+' '+platform.release(),'version':VERSION});self.bound=r['bound'];self.pair_code=r.get('pair_code','')
+            r=yield ('enroll',{'host':socket.gethostname(),'platform':platform.system()+' '+platform.release(),'version':VERSION});self.bound=r['bound'];self.pair_code=r.get('pair_code','')
             if not self.bound:return
-        self.flush()
+        yield from self.flush_requests()
         for p in self.outbox.glob('*.json'):
             r=json.loads(p.read_text(encoding='utf-8'))
-            if not r.get('reported'):self.cloud.call('local-result',{'record':r});r['reported']=True;atomic_json(p,r)
-        r=self.cloud.call('poll',{'version':VERSION,'inventory':self.inventory,'applied':self.legacy_applied})
+            if not r.get('reported'):(yield ('local-result',{'record':r}));r['reported']=True;atomic_json(p,r)
+        r=yield ('poll',{'version':VERSION,'inventory':json.loads(json.dumps(self.inventory)),'applied':self.legacy_applied})
         self.online=True;self.cloud_name=r['name'];self.paused=r['paused']
         if r.get('assignment'):
             a=r['assignment'];self.library.put(a['bundle'],'管理端下发',{'id':a['template_id'],'revision':a['revision']})
-            self.cloud.call('applied',{'assignment':a['id']});self.legacy_applied=a['id']
-        self.sync_catalog(r.get('catalog'))
-        if r.get('commands'):self.remote_test(r['commands'][0]);self.flush()
+            (yield ('applied',{'assignment':a['id']}));self.legacy_applied=a['id']
+        catalog=r.get('catalog');downloaded={}
+        if catalog and catalog['revision']!=self.catalog_revision:
+            for item in catalog['items']:
+                if not self.library.get(item['digest']):downloaded[item['digest']]=yield ('catalog-template',{'template':item['id'],'revision':item['revision']})
+        self.sync_catalog(catalog,downloaded)
+        if r.get('commands'):
+            self.remote_test(r['commands'][0])
+            yield from self.flush_requests()
+    def poll_cloud(self):
+        # Only the HTTP call runs in the background. All state changes and print actions
+        # resume on the engine thread, so remote and local jobs cannot race each other.
+        if self.update_installing or self.stop.is_set():return
+        try:
+            if self._cloud_cycle is None:
+                if time.monotonic()<self.cloud_retry:return
+                self._cloud_cycle=self.cloud_cycle();request=next(self._cloud_cycle)
+            else:
+                if self._cloud_future is None or not self._cloud_future.done():return
+                reply=self._cloud_future.result();self._cloud_future=None
+                request=self._cloud_cycle.send(reply)
+            route,data=request
+            self._cloud_future=background_call(lambda:self.cloud.call(route,data))
+        except StopIteration:
+            self._cloud_cycle=None;self._cloud_future=None;self.cloud_retry=time.monotonic()+3
+        except Exception as e:
+            self._cloud_cycle=None;self._cloud_future=None;self.online=False;self.cloud_retry=time.monotonic()+6
+            if isinstance(e,CloudError) and e.status in (401,403):self.bound=False
+            self.inventory['cloud_error']=str(e)[:300]
     def run(self):
         self.render_preview();self.ready=True
         while not self.stop.is_set():
@@ -175,20 +225,15 @@ class StudioEngine(Engine):
                     elif kind=='config':
                         self.config=checked_config(data['config']);self.running=False;self.gate=None;atomic_json(self.dir/'printer-settings.json',{'interface':'system',**self.config});self.message='打印设置已保存，点击开始';self.render_preview()
                 if self.update_installing:
-                    self.update();self.stop.wait(.3);continue
+                    self.update();self.stop.wait(.15);continue
                 ports=self.devices()
-                if time.monotonic()>=self.cloud_retry:
-                    try:self.cloud_tick();self.cloud_retry=time.monotonic()+3
-                    except Exception as e:
-                        self.online=False;self.cloud_retry=time.monotonic()+6
-                        if isinstance(e,CloudError) and e.status in (401,403):self.bound=False
-                        self.inventory['cloud_error']=str(e)[:300]
+                self.poll_cloud()
                 if self.running and not self.local_pause:
                     # Local imports run offline. A deliberate cloud pause still stops this bound station.
                     if self.bound and self.paused:self.message='管理端已暂停生产'
                     else:
                         port=self.gate.poll(ports,time.monotonic(),ready=True)
-                        if port:self.local_print(port.device)
+                        if port:self.local_print(port.device,self.gate.entries[self.gate.identity(port)]['first'])
                 self.update()
             except Exception as e:self.record_failure('execute',e);self.running=False;self.update()
-            self.stop.wait(.3)
+            self.stop.wait(.15)

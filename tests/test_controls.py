@@ -113,6 +113,15 @@ class ControlsTests(unittest.TestCase):
         self.assertTrue(updates.button.isEnabled())
         self.assertEqual(updates.phase, 'idle')
 
+    def test_device_count_is_visible_in_card_and_records(self):
+        fields={'device_id':'02000000ABCD','mac':'02:00:00:00:AB:CD'}
+        for _ in range(2):
+            job=self.engine.local.start(fields,{},'test',{})
+            self.engine.local.finish(job,'submitted','queue accepted')
+        self.engine.last_mac=fields['mac'];self.window.changed(self.engine.snapshot())
+        self.assertIn('累计打印 2 次',self.window.result_card.value.text())
+        self.assertEqual(self.window.records.item(0,2).text(),'2')
+
     def test_install_preparation_disables_production_controls(self):
         self.assertTrue(self.engine.prepare_update())
         self.window.changed(self.engine.snapshot())

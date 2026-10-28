@@ -46,8 +46,15 @@ class ArrivalGate:
         present={self.identity(p) for p in matches}
         for key in list(self.entries):
             entry=self.entries[key]
-            if key in present:entry['last']=now
-            elif now-entry['last']>=self.absent:del self.entries[key]
+            missing=entry.get('missing_since')
+            if key in present:
+                if missing is not None and (not entry['used'] or now-missing>=self.absent):
+                    del self.entries[key]
+                else:
+                    entry['last']=now;entry.pop('missing_since',None)
+            else:
+                entry.setdefault('missing_since',now)
+                if now-entry['missing_since']>=self.absent:del self.entries[key]
         for port in matches:
             self.entries.setdefault(self.identity(port),{'first':now,'last':now,'used':False})
         if len(matches)>1 and ready:raise ValueError('检测到多个匹配设备，请只连接一台待打印 ESP32')

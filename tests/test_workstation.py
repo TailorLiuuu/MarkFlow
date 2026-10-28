@@ -43,7 +43,7 @@ class WorkstationTests(unittest.TestCase):
         gate=ArrivalGate(0x303a,0x1001);p=self.port()
         gate.poll([p],0);gate.poll([p],2);gate.poll([],2.5)
         self.assertIsNone(gate.poll([self.port(device='COM51')],3))
-        gate.poll([],7);self.assertIsNone(gate.poll([p],8));self.assertIs(gate.poll([p],10),p)
+        gate.poll([],7);gate.poll([],10);self.assertIsNone(gate.poll([p],11));self.assertIs(gate.poll([p],13),p)
     def test_modem_ignored_and_multiple_esp_rejected(self):
         gate=ArrivalGate(0x303a,0x1001)
         self.assertIsNone(gate.poll([self.port(vid=13667)],0))

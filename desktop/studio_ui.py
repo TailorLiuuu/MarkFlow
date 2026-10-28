@@ -68,13 +68,13 @@ class Window(QMainWindow):
         previewcard=card();pl=QVBoxLayout(previewcard);pl.setContentsMargins(18,15,18,12);pr=QHBoxLayout();self.title=label('选择模板','section');pr.addWidget(self.title);pr.addStretch();self.size_label=label('','muted');pr.addWidget(self.size_label);pl.addLayout(pr)
         self.preview=Preview();pl.addWidget(self.preview,1);self.preview_note=label('预览示例 · 实际打印时自动读取设备 MAC','muted');self.preview_note.setAlignment(Qt.AlignmentFlag.AlignCenter);pl.addWidget(self.preview_note);bodyl.addWidget(previewcard,1)
         self.tabs=QTabWidget();self.tabs.setMaximumHeight(150);self.tabs.setMinimumHeight(120)
-        self.records=QTableWidget(0,3);self.records.setHorizontalHeaderLabels(['时间','设备 MAC','结果']);self.records.verticalHeader().hide();self.records.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents);self.records.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents);self.records.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.Stretch);self.records.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.records=QTableWidget(0,4);self.records.setHorizontalHeaderLabels(['时间','设备 MAC','累计次数','结果']);self.records.verticalHeader().hide();self.records.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.ResizeToContents);self.records.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.ResizeToContents);self.records.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.ResizeToContents);self.records.horizontalHeader().setSectionResizeMode(3,QHeaderView.ResizeMode.Stretch);self.records.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.logs=QPlainTextEdit();self.logs.setReadOnly(True);self.tabs.addTab(self.records,'最近记录');self.tabs.addTab(self.logs,'运行消息');bodyl.addWidget(self.tabs)
         controls=card();cl=QHBoxLayout(controls);cl.setContentsMargins(16,14,16,14);statusbox=QVBoxLayout();self.status=label('准备就绪','section');self.status.setWordWrap(True);self.error=label('','error');self.error.setWordWrap(True);statusbox.addWidget(self.status);statusbox.addWidget(self.error);cl.addLayout(statusbox,1)
         settings=QPushButton('打印设置');self.settings_button=settings;settings.clicked.connect(self.settings);cl.addWidget(settings)
         self.start=QPushButton('▶  开始');self.start.setObjectName('primary');self.start.setMinimumWidth(105);self.start.clicked.connect(self.start_clicked);cl.addWidget(self.start)
         self.stop=QPushButton('■  停止');self.stop.setObjectName('stop');self.stop.clicked.connect(engine.halt);cl.addWidget(self.stop);bodyl.addWidget(controls)
-        footer=QHBoxLayout();footer.addWidget(label('生产自动去重 · 测试打印单独记录','muted'));footer.addStretch();self.allow=QPushButton('允许远程测试');self.allow.setObjectName('quiet');self.allow.clicked.connect(lambda:engine.enqueue('allow-remote'));footer.addWidget(self.allow);bodyl.addLayout(footer)
+        footer=QHBoxLayout();footer.addWidget(label('重新插入打印 1 张 · 次数按成功提交队列统计','muted'));footer.addStretch();self.allow=QPushButton('允许远程测试');self.allow.setObjectName('quiet');self.allow.clicked.connect(lambda:engine.enqueue('allow-remote'));footer.addWidget(self.allow);bodyl.addLayout(footer)
     def start_clicked(self):
         if self.pending_start or not self.start.isEnabled():return
         self.start.setEnabled(False)
@@ -127,7 +127,7 @@ class Window(QMainWindow):
         self.size_label.setText(f"{item.get('width','—')} × {item.get('height','—')} mm")
         self.connection.setText('●  管理端已连接' if s['online'] else '○  本地模式 · 管理端未连接');self.pairing.setText('配对码  '+s['pair_code'] if s.get('pair_code') and not s['bound'] else '电脑  '+s['name'])
         self.badge.setText('正在执行' if s['busy'] else '管理端已暂停' if s['paused'] else '生产运行中' if s['running'] else '已停止' if s['local_pause'] else '准备就绪')
-        self.printer_card.value.setText(s['config'].get('name') or '尚未选择');ports=[p['port'] for p in s['ports'] if p['vid']==s['config']['vid'] and p['pid']==s['config']['pid']];self.device_card.value.setText(' · '.join(ports) if ports else '等待连接 ESP32');self.result_card.value.setText(s['last_mac'] or '—')
+        self.printer_card.value.setText(s['config'].get('name') or '尚未选择');ports=[p['port'] for p in s['ports'] if p['vid']==s['config']['vid'] and p['pid']==s['config']['pid']];self.device_card.value.setText(' · '.join(ports) if ports else '等待连接 ESP32');self.result_card.value.setText((s['last_mac']+'\n累计打印 '+str(s.get('print_count',0))+' 次') if s['last_mac'] else '—')
         self.status.setText(s['message']);self.error.setText(s['error']);self.error.setVisible(bool(s['error']));self.update_controls();self.allow.setVisible(s['local_pause'] and not self.pending_start)
         self.preview_note.setText('最近设备预览 · '+s['last_mac'] if s['last_mac'] else '预览示例 · 实际打印时自动读取设备 MAC')
         path=s['preview'];pk=(path,Path(path).stat().st_mtime_ns if path and Path(path).exists() else 0)
@@ -136,7 +136,7 @@ class Window(QMainWindow):
         if rows!=self.rows_key:
             self.records.setRowCount(len(s['recent']))
             for i,r in enumerate(s['recent']):
-                for col,val in enumerate([r['created'][11:],r['mac'],r['message']]):self.records.setItem(i,col,QTableWidgetItem(val))
+                for col,val in enumerate([r['created'][11:],r['mac'],str(r.get('print_count',0)),r['message']]):self.records.setItem(i,col,QTableWidgetItem(val))
             self.rows_key=rows
         logs='\n'.join(e['time']+'  '+e['text'] for e in s['events'])
         if self.logs.toPlainText()!=logs:self.logs.setPlainText(logs)

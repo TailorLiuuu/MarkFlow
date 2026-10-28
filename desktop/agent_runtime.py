@@ -17,7 +17,7 @@ from pathlib import Path
 from label_contract import validate_bundle,bundle_digest,execute_data,MAX_BUNDLE_BYTES
 from workstation import atomic_json,CalibrationStore,printer_key,ArrivalGate
 
-VERSION='0.4.4'
+VERSION='0.4.5'
 ORIGIN='https://toolbox.infinlab.cn'
 
 class CloudError(RuntimeError):
@@ -112,21 +112,27 @@ class Engine:
         old=self.assignment;self.assignment=a
         if not self.gate or not old or (old['config']['vid'],old['config']['pid'])!=(cfg['vid'],cfg['pid']):self.gate=ArrivalGate(cfg['vid'],cfg['pid'])
         self.last_error='';self.message='模板已生效，等待 ESP32 接入';self.update()
-    def flush(self):
+    def flush_requests(self):
         for p in self.jobs.glob('*.json'):
             j=json.loads(p.read_text(encoding='utf-8'))
             if j.get('reported') or j['status'] not in ('submitted','failed','unknown'):continue
             if not j.get('job_id'):
-                found=self.cloud.call('recover',{'request_id':j['request_id']})
+                found=yield ('recover',{'request_id':j['request_id']})
                 if not found['job_id']:j['reported']=True;atomic_json(p,j);continue
                 j['job_id']=found['job_id']
                 if found['status'] in ('submitted','failed','unknown'):j['status']=found['status']
-            self.cloud.call('result',{'job_id':j['job_id'],'status':j['status'],'message':j['message'],'details':j.get('details',{})})
+            yield ('result',{'job_id':j['job_id'],'status':j['status'],'message':j['message'],'details':j.get('details',{})})
             j['reported']=True;atomic_json(p,j)
         for p in self.commands.glob('*.json'):
             j=json.loads(p.read_text(encoding='utf-8'))
             if j.get('done') and not j.get('reported'):
-                self.cloud.call('command-result',{'command':j['id'],'message':j['message']});j['reported']=True;atomic_json(p,j)
+                yield ('command-result',{'command':j['id'],'message':j['message']});j['reported']=True;atomic_json(p,j)
+    def flush(self):
+        requests=self.flush_requests();reply=None
+        while True:
+            try:route,data=requests.send(reply)
+            except StopIteration:return
+            reply=self.cloud.call(route,data)
     def record_failure(self,phase,error):
         self.last_error=str(error)[:1000];self.message='执行失败，等待新设备或网页重试' if phase=='execute' else '连接异常，暂停新任务'
         atomic_json(self.dir/'agent-last-error.json',{'time':datetime.datetime.now().isoformat(),'phase':phase,'message':self.last_error})
