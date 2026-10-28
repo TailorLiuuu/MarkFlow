@@ -4,7 +4,7 @@
 
 面向设备生产的桌面标签工作室。导入模板，点击开始，读取 ESP32 的 MAC 并生成二维码标签。
 
-本仓库仅包含桌面客户端、模板示例、客户端测试和构建发布配置，不包含网页管理端或服务端代码。
+本仓库包含桌面客户端、模板示例、模板开发 Skill、客户端测试和构建发布配置，不包含网页管理端或服务端代码。
 
 ## 功能
 
@@ -33,6 +33,46 @@
 软件版本和下载统一在本仓库 Releases 维护。Windows 客户端提供“检查更新”：启动后及每 6 小时检查正式版，有新版时提示。点击“下载并更新”后，从本仓库下载并校验，停止生产后安装并重启；启动失败会回退旧程序。模板、绑定和微调保存在独立用户数据目录，不随程序替换。
 
 ## 开发与构建
+
+### 模板开发 Skill / 离线工具
+
+[markflow-templates](skills/markflow-templates/SKILL.md) 可创建 30 × 20 mm ESP32 标签，修改 MAC 显示格式、校验、生成预览，以及打包模板列表。技能目录可以单独复制，不依赖安装整个桌面软件。示例使用合成 MAC，不含电脑绑定、生产记录或品牌 Logo。
+
+**直接试跑**：克隆仓库并进入根目录，使用 Python 3.10+（预览推荐 3.11）。创建、校验、格式修改和打包仅需标准库：
+
+```sh
+git clone https://github.com/TailorLiuuu/MarkFlow.git
+cd MarkFlow
+python -m venv .venv
+```
+
+Windows PowerShell 执行 `.\.venv\Scripts\Activate.ps1`，macOS/Linux 执行 `source .venv/bin/activate`，然后：
+
+```sh
+mkdir .skill-demo
+python skills/markflow-templates/scripts/self_test.py
+python skills/markflow-templates/scripts/markflow_template.py create --prefix "Device_" --output .skill-demo/device.labeljob
+python skills/markflow-templates/scripts/markflow_template.py validate .skill-demo/device.labeljob
+python -m pip install -r skills/markflow-templates/scripts/requirements-preview.txt
+python skills/markflow-templates/scripts/markflow_template.py preview .skill-demo/device.labeljob --output .skill-demo/device.png
+python skills/markflow-templates/scripts/markflow_template.py pack .skill-demo/device.labeljob --output .skill-demo/production.markflow
+```
+
+打开生成的 PNG 检查排版，将 `.labeljob` 或 `.markflow` 导入桌面端并选择即可。上述命令不会连接 ESP32 或打印机；输出文件存在时会拒绝覆盖，重复试跑请使用新的输出文件名。预览退出码 2 表示裁切或二维码密度警告；Linux/后台环境缺少字体时可用 `--font /path/to/font.ttf` 指定本地字体。
+
+**作为 Skill 使用**：复制整个 `skills/markflow-templates` 文件夹到自己的 Codex 技能目录（默认 `~/.codex/skills/`，自定义时使用 `$CODEX_HOME/skills/`）；在新会话中输入：
+
+> 使用 $markflow-templates 制作 30×20 标签，底部 MAC 不带冒号，二维码保留原始 MAC，生成导入文件和预览。
+
+已有模板去掉底部 MAC 的冒号：
+
+```sh
+python skills/markflow-templates/scripts/markflow_template.py mac-text original.labeljob --element mac --style compact --output compact.labeljob
+```
+
+只调整指定文本元素，保留二维码与排版；若设备号流程含前缀或其他格式，脚本会拒绝直接替换。格式说明见 [模板契约](skills/markflow-templates/references/format.md)，管理端交付和后续 MCP 接入边界见 [开发者接入](skills/markflow-templates/references/integration.md)。当前提供的是 Skill 与离线 CLI，未提供联网 MCP 服务。
+
+### 桌面客户端
 
 推荐 Python 3.11，Windows x64：
 

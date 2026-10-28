@@ -8,6 +8,12 @@ ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = {'.gitignore', 'README.md', 'NOTICE.md'}
 DIRS = {'desktop', 'tests', 'assets', 'docs', 'scripts', '.github'}
 SUFFIXES = {'.py', '.md', '.txt', '.spec', '.labeljob', '.png', '.ico', '.yml'}
+SKILL_FILES = {'skills/markflow-templates/' + p for p in (
+    'SKILL.md', 'agents/openai.yaml', 'assets/esp32-30x20.labeljob',
+    'references/format.md', 'references/integration.md', 'references/maintenance.md',
+    'scripts/markflow_template.py', 'scripts/self_test.py', 'scripts/requirements-preview.txt',
+    'scripts/runtime/label_contract.py', 'scripts/runtime/label_render.py',
+)}
 BLOCKED = re.compile(r'(?:auth_server|label_agent_api|test_cloud_store|agent-identity|agent-status|printer-settings|calibration|studio-state|e2e-result)', re.I)
 PATTERNS = [
     re.compile(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'),
@@ -33,7 +39,7 @@ def main():
     paths = files(args.working_tree)
     for name in paths:
         path = Path(name)
-        if (name not in ROOT_FILES and (path.parts[0] not in DIRS or path.suffix not in SUFFIXES)) or BLOCKED.search(name):
+        if (name not in ROOT_FILES and name not in SKILL_FILES and (path.parts[0] not in DIRS or path.suffix not in SUFFIXES)) or BLOCKED.search(name):
             failures.append((name, 'file outside desktop source allowlist'))
             continue
         actual = ROOT / path

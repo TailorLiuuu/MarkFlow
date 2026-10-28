@@ -1,0 +1,4 @@
+interface:
+  display_name: "MarkFlow 标签模板"
+  short_description: "创建和修改 ESP32 标签模板，校验 MAC、二维码与 Logo 排版"
+  default_prompt: "使用 $markflow-templates 制作一个 30 × 20 mm 标签，底部 MAC 无冒号，二维码保留原始 MAC，并生成导入文件和预览。"

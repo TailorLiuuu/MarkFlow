@@ -1,0 +1,17 @@
+{
+  "format": "label-production", "version": 1, "name": "ESP32 · 设备标签",
+  "template": {
+    "format": "label-desk", "version": 1, "name": "ESP32 30x20", "width": 30, "height": 20,
+    "elements": [
+      {"id":"name","type":"text","x":0.5,"y":0.8,"w":29,"h":3.3,"font":2.6,"bold":true,"align":"center","content":"Device_{{mac_last4}}"},
+      {"id":"qr","type":"qr","x":8,"y":3.1,"w":14,"h":14,"content":"{{mac}}"},
+      {"id":"mac","type":"text","x":0.5,"y":16.3,"w":29,"h":3,"font":2.25,"bold":true,"align":"center","content":"{{device_id}}"}
+    ]
+  },
+  "workflow": {"variables":{},"steps":[
+    {"id":"source","type":"read_esp32_mac"},
+    {"id":"format","type":"format_id","case":"upper","separator":"compact","prefix":""},
+    {"id":"preview","type":"preview"},
+    {"id":"print","type":"print_label"}
+  ]}
+}
